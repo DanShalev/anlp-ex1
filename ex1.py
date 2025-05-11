@@ -1,4 +1,5 @@
 import argparse
+import datetime
 import os
 
 import numpy as np
@@ -6,8 +7,8 @@ import wandb
 from datasets import load_dataset
 from sklearn.metrics import accuracy_score, precision_recall_fscore_support
 from transformers import (
-    BertForSequenceClassification,
-    BertTokenizerFast,
+    AutoModelForSequenceClassification,
+    AutoTokenizer,
     DataCollatorWithPadding,
     Trainer,
     TrainingArguments,
@@ -65,16 +66,22 @@ class MRPCTrainer:
         self.trainer = None
         self.encoded_dataset = None
         self.data_collator = None
+        self.run_name = self._generate_run_name()
+
+    def _generate_run_name(self):
+        """Generate a unique run name based on timestamp and hyperparameters"""
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        return f"run_{timestamp}_lr{self.args.lr}_bs{self.args.batch_size}_ep{self.args.num_train_epochs}"
 
     def setup_wandb(self):
         """Initialize Weights & Biases for experiment tracking"""
-        wandb.init(project="mrpc-paraphrase-detection", name="bert-base-uncased")
+        wandb.init(project="mrpc-paraphrase-detection", name=self.run_name)
 
     def load_and_preprocess_data(self):
         """Load the MRPC dataset and preprocess it"""
         # Load dataset
         self.dataset = load_dataset("glue", "mrpc")
-        self.tokenizer = BertTokenizerFast.from_pretrained("bert-base-uncased")
+        self.tokenizer = AutoTokenizer.from_pretrained(self.args.model_path)
 
         # Tokenize dataset
         def preprocess(example):
@@ -115,7 +122,7 @@ class MRPCTrainer:
 
     def setup_model(self):
         """Initialize the BERT model"""
-        self.model = BertForSequenceClassification.from_pretrained(
+        self.model = AutoModelForSequenceClassification.from_pretrained(
             self.args.model_path, num_labels=2
         )
 
@@ -125,6 +132,7 @@ class MRPCTrainer:
             output_dir="./results",
             eval_strategy="epoch",
             save_strategy="no",
+            save_total_limit=1,
             logging_strategy="steps",
             logging_steps=1,
             learning_rate=self.args.lr,
@@ -134,6 +142,8 @@ class MRPCTrainer:
             weight_decay=0.01,
             report_to="wandb",
             load_best_model_at_end=False,
+            save_on_each_node=False,
+            save_only_model=True,
         )
 
         self.trainer = Trainer(
@@ -146,18 +156,38 @@ class MRPCTrainer:
             compute_metrics=self.compute_metrics,
         )
 
+    def _log_results(self, epoch, metrics):
+        """Log results to res.txt file"""
+        with open("res.txt", "a") as f:
+            if epoch == 1:  # Write header for first epoch
+                f.write(f"Run: {self.run_name}\n")
+            f.write(
+                f"epoch_num: {epoch}, lr: {self.args.lr}, batch_size: {self.args.batch_size}, eval_acc: {metrics['accuracy']:.4f}\n"
+            )
+
     def train(self):
         """Train the model and evaluate on validation set"""
+        # Clear previous results
+        if os.path.exists("res.txt"):
+            os.remove("res.txt")
+
         self.trainer.train()
-        eval_result = self.trainer.evaluate()
-        print("Validation Results:", eval_result)
+
+        # Evaluate and log results for each epoch
+        for epoch in range(1, self.args.num_train_epochs + 1):
+            eval_result = self.trainer.evaluate()
+            self._log_results(epoch, eval_result)
+            print(f"Epoch {epoch} Validation Results:", eval_result)
 
     def predict(self):
         """Generate predictions on test set and save to file"""
         # Load the model for prediction
-        self.model = BertForSequenceClassification.from_pretrained(
+        self.model = AutoModelForSequenceClassification.from_pretrained(
             self.args.model_path, num_labels=2
         )
+        # Set model to evaluation mode
+        self.model.eval()
+
         self.trainer = Trainer(
             model=self.model,
             tokenizer=self.tokenizer,
