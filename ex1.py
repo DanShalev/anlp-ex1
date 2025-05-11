@@ -131,8 +131,8 @@ class MRPCTrainer:
         training_args = TrainingArguments(
             output_dir="./results",
             eval_strategy="epoch",
-            save_strategy="no",
-            save_total_limit=1,
+            save_strategy="epoch",  # Save checkpoint every epoch
+            save_total_limit=None,  # Keep all checkpoints
             logging_strategy="steps",
             logging_steps=1,
             learning_rate=self.args.lr,
@@ -165,6 +165,12 @@ class MRPCTrainer:
                 f"epoch_num: {epoch}, lr: {self.args.lr}, batch_size: {self.args.batch_size}, eval_acc: {metrics['accuracy']:.4f}\n"
             )
 
+        # Check if we've reached the target accuracy
+        if metrics["accuracy"] >= 0.75:
+            print(f"Reached target accuracy of 75%! Stopping training.")
+            return True
+        return False
+
     def train(self):
         """Train the model and evaluate on validation set"""
         # Clear previous results
@@ -176,32 +182,55 @@ class MRPCTrainer:
         # Evaluate and log results for each epoch
         for epoch in range(1, self.args.num_train_epochs + 1):
             eval_result = self.trainer.evaluate()
-            self._log_results(epoch, eval_result)
+            if self._log_results(epoch, eval_result):
+                break
             print(f"Epoch {epoch} Validation Results:", eval_result)
 
     def predict(self):
         """Generate predictions on test set and save to file"""
-        # Load the model for prediction
-        self.model = AutoModelForSequenceClassification.from_pretrained(
-            self.args.model_path, num_labels=2
-        )
-        # Set model to evaluation mode
-        self.model.eval()
+        # Get all checkpoint directories
+        checkpoint_dirs = [
+            d for d in os.listdir("./results") if d.startswith("checkpoint-")
+        ]
+        checkpoint_dirs.sort(
+            key=lambda x: int(x.split("-")[1])
+        )  # Sort by checkpoint number
 
-        self.trainer = Trainer(
-            model=self.model,
-            tokenizer=self.tokenizer,
-            data_collator=self.data_collator,
-        )
+        if not checkpoint_dirs:
+            print("No checkpoints found. Using the final model.")
+            checkpoint_dirs = [self.args.model_path]
 
-        # Make predictions
-        predictions = self.trainer.predict(self.encoded_dataset["test"])
-        preds = np.argmax(predictions.predictions, axis=1)
+        all_predictions = []
 
-        # Save predictions to file
-        with open("predictions.txt", "w") as f:
-            for pred in preds:
-                f.write(f"{pred}\n")
+        for checkpoint_dir in checkpoint_dirs:
+            checkpoint_path = os.path.join("./results", checkpoint_dir)
+            print(f"Making predictions with checkpoint: {checkpoint_dir}")
+
+            # Load the model from checkpoint
+            self.model = AutoModelForSequenceClassification.from_pretrained(
+                checkpoint_path, num_labels=2
+            )
+            self.model.eval()
+
+            self.trainer = Trainer(
+                model=self.model,
+                tokenizer=self.tokenizer,
+                data_collator=self.data_collator,
+            )
+
+            # Make predictions
+            predictions = self.trainer.predict(self.encoded_dataset["test"])
+            preds = np.argmax(predictions.predictions, axis=1)
+            all_predictions.append(preds)
+
+        # Save predictions from each checkpoint
+        for i, preds in enumerate(all_predictions):
+            checkpoint_name = checkpoint_dirs[i] if checkpoint_dirs else "final_model"
+            output_file = f"predictions_{checkpoint_name}.txt"
+            with open(output_file, "w") as f:
+                for pred in preds:
+                    f.write(f"{pred}\n")
+            print(f"Saved predictions to {output_file}")
 
     def run(self):
         """Main execution flow"""
