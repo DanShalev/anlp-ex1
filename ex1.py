@@ -162,11 +162,11 @@ class MRPCTrainer:
             if epoch == 1:  # Write header for first epoch
                 f.write(f"Run: {self.run_name}\n")
             f.write(
-                f"epoch_num: {epoch}, lr: {self.args.lr}, batch_size: {self.args.batch_size}, eval_acc: {metrics['accuracy']:.4f}\n"
+                f"epoch_num: {epoch}, lr: {self.args.lr}, batch_size: {self.args.batch_size}, eval_acc: {metrics['eval_accuracy']:.4f}\n"
             )
 
         # Check if we've reached the target accuracy
-        if metrics["accuracy"] >= 0.75:
+        if metrics["eval_accuracy"] >= 0.75:
             print(f"Reached target accuracy of 75%! Stopping training.")
             return True
         return False
