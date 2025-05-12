@@ -14,6 +14,8 @@ from transformers import (
     TrainingArguments,
 )
 
+ALL_SAMPLES = -1
+
 
 def parse_args():
     parser = argparse.ArgumentParser(
@@ -81,7 +83,7 @@ class MRPCTrainer:
         """Load the MRPC dataset and preprocess it"""
         # Load dataset
         self.dataset = load_dataset("glue", "mrpc")
-        self.tokenizer = AutoTokenizer.from_pretrained(self.args.model_path)
+        self.tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased")
 
         # Tokenize dataset
         def preprocess(example):
@@ -92,26 +94,41 @@ class MRPCTrainer:
         self.encoded_dataset = self.dataset.map(preprocess, batched=True)
         self.data_collator = DataCollatorWithPadding(tokenizer=self.tokenizer)
 
-        # Limit dataset sizes if specified
-        self._limit_dataset_sizes()
+        # Limit dataset sizes (if specified)
+        self.limit_dataset_sizes()
 
-    def _limit_dataset_sizes(self):
+    def limit_dataset_sizes(self):
         """Limit the size of datasets based on command line arguments"""
-        if self.args.max_train_samples != -1:
+        if self.args.max_train_samples != ALL_SAMPLES:
             self.encoded_dataset["train"] = self.encoded_dataset["train"].select(
-                range(self.args.max_train_samples)
+                range(
+                    min(self.args.max_train_samples, len(self.encoded_dataset["train"]))
+                )
             )
-        if self.args.max_eval_samples != -1:
+
+        if self.args.max_eval_samples != ALL_SAMPLES:
             self.encoded_dataset["validation"] = self.encoded_dataset[
                 "validation"
-            ].select(range(self.args.max_eval_samples))
-        if self.args.max_predict_samples != -1:
+            ].select(
+                range(
+                    min(
+                        self.args.max_eval_samples,
+                        len(self.encoded_dataset["validation"]),
+                    )
+                )
+            )
+        if self.args.max_predict_samples != ALL_SAMPLES:
             self.encoded_dataset["test"] = self.encoded_dataset["test"].select(
-                range(self.args.max_predict_samples)
+                range(
+                    min(
+                        self.args.max_predict_samples, len(self.encoded_dataset["test"])
+                    )
+                )
             )
 
     def compute_metrics(self, pred):
         """Compute evaluation metrics"""
+        # TODO we need to implement blue metrics
         labels = pred.label_ids
         preds = np.argmax(pred.predictions, axis=1)
         acc = accuracy_score(labels, preds)
@@ -139,7 +156,6 @@ class MRPCTrainer:
             per_device_train_batch_size=self.args.batch_size,
             per_device_eval_batch_size=self.args.batch_size,
             num_train_epochs=self.args.num_train_epochs,
-            weight_decay=0.01,
             report_to="wandb",
             load_best_model_at_end=False,
             save_on_each_node=False,
@@ -156,20 +172,14 @@ class MRPCTrainer:
             compute_metrics=self.compute_metrics,
         )
 
-    def _log_results(self, epoch, metrics):
+    def log_results(self, epoch, metrics):  # TODO check correct logs at line 185
         """Log results to res.txt file"""
         with open("res.txt", "a") as f:
-            if epoch == 1:  # Write header for first epoch
+            if epoch == 1:
                 f.write(f"Run: {self.run_name}\n")
             f.write(
                 f"epoch_num: {epoch}, lr: {self.args.lr}, batch_size: {self.args.batch_size}, eval_acc: {metrics['eval_accuracy']:.4f}\n"
             )
-
-        # Check if we've reached the target accuracy
-        if metrics["eval_accuracy"] >= 0.75:
-            print(f"Reached target accuracy of 75%! Stopping training.")
-            return True
-        return False
 
     def train(self):
         """Train the model and evaluate on validation set"""
@@ -182,9 +192,7 @@ class MRPCTrainer:
         # Evaluate and log results for each epoch
         for epoch in range(1, self.args.num_train_epochs + 1):
             eval_result = self.trainer.evaluate()
-            if self._log_results(epoch, eval_result):
-                break
-            print(f"Epoch {epoch} Validation Results:", eval_result)
+            self.log_results(epoch, eval_result)
 
     def predict(self):
         """Generate predictions on test set and save to file"""
@@ -242,8 +250,10 @@ class MRPCTrainer:
             self.setup_trainer()
             self.train()
 
-        if self.args.do_predict:
-            self.predict()
+        # if self.args.do_predict:
+        # // TODO load model from path
+        #     self.predict() // TODO check predoctop, prediction length
+        # TODO Check all flags
 
 
 def main():
