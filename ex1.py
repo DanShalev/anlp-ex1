@@ -15,6 +15,7 @@ from transformers import (
 )
 
 ALL_SAMPLES = -1
+OUTPUT_DIR = "./results"
 
 
 def parse_args():
@@ -72,7 +73,7 @@ class MRPCTrainer:
 
     def _generate_run_name(self):
         """Generate a unique run name based on timestamp and hyperparameters"""
-        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        timestamp = datetime.datetime.now().strftime("%m:%d_%H:%M")
         return f"run_{timestamp}_lr{self.args.lr}_bs{self.args.batch_size}_ep{self.args.num_train_epochs}"
 
     def setup_wandb(self):
@@ -146,10 +147,10 @@ class MRPCTrainer:
     def setup_trainer(self):
         """Configure and initialize the HuggingFace Trainer"""
         training_args = TrainingArguments(
-            output_dir="./results",
+            output_dir=OUTPUT_DIR,
             eval_strategy="epoch",
-            save_strategy="epoch",  # Save checkpoint every epoch
-            save_total_limit=None,  # Keep all checkpoints
+            save_strategy="no",
+            save_total_limit=1,
             logging_strategy="steps",
             logging_steps=1,
             learning_rate=self.args.lr,
@@ -198,7 +199,7 @@ class MRPCTrainer:
         """Generate predictions on test set and save to file"""
         # Get all checkpoint directories
         checkpoint_dirs = [
-            d for d in os.listdir("./results") if d.startswith("checkpoint-")
+            d for d in os.listdir(OUTPUT_DIR) if d.startswith("checkpoint-")
         ]
         checkpoint_dirs.sort(
             key=lambda x: int(x.split("-")[1])
