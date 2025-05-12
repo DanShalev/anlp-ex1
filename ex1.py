@@ -12,6 +12,7 @@ from transformers import (
     DataCollatorWithPadding,
     Trainer,
     TrainingArguments,
+    no_grad,
 )
 
 ALL_SAMPLES = -1
@@ -54,7 +55,7 @@ def parse_args():
     parser.add_argument(
         "--model_path",
         type=str,
-        default="bert-base-uncased",
+        default=None,
         help="Model path to use for prediction",
     )
     return parser.parse_args()
@@ -158,7 +159,7 @@ class MRPCTrainer:
         training_args = TrainingArguments(
             output_dir=OUTPUT_DIR,
             eval_strategy="epoch",
-            save_strategy="no",
+            save_strategy="epoch",
             save_total_limit=1,
             logging_strategy="steps",
             logging_steps=1,
@@ -182,7 +183,7 @@ class MRPCTrainer:
             compute_metrics=self.compute_metrics,
         )
 
-    def log_results(self, epoch, metrics):  # TODO check correct logs at line 185
+    def log_results(self, epoch, metrics):
         """Log results to res.txt file"""
         with open("res.txt", "a") as f:
             if epoch == 1:
@@ -205,50 +206,32 @@ class MRPCTrainer:
             self.log_results(epoch, eval_result)
 
     def predict(self):
-        """Generate predictions on test set and save to file"""
-        # Get all checkpoint directories
-        checkpoint_dirs = [
-            d for d in os.listdir(OUTPUT_DIR) if d.startswith("checkpoint-")
-        ]
-        checkpoint_dirs.sort(
-            key=lambda x: int(x.split("-")[1])
-        )  # Sort by checkpoint number
+        """Make predictions on the test set and save results"""
+        # Load model from checkpoint
+        self.model = AutoModelForSequenceClassification.from_pretrained(
+            self.args.model_path
+        )
 
-        if not checkpoint_dirs:
-            print("No checkpoints found. Using the final model.")
-            checkpoint_dirs = [self.args.model_path]
+        # Prepare test data
+        test_data = self.data_collator(self.encoded_dataset["test"])
 
-        all_predictions = []
+        # Make predictions
+        with no_grad():
+            outputs = self.model(**test_data)
+            preds = np.argmax(outputs.logits.cpu().numpy(), axis=1)
 
-        for checkpoint_dir in checkpoint_dirs:
-            checkpoint_path = os.path.join("./results", checkpoint_dir)
-            print(f"Making predictions with checkpoint: {checkpoint_dir}")
+        # Calculate accuracy if labels are available
+        if "label" in self.encoded_dataset["test"].features:
+            labels = self.encoded_dataset["test"]["label"]
+            accuracy = accuracy_score(labels, preds)
+            print(f"Test set accuracy: {accuracy:.4f}")
 
-            # Load the model from checkpoint
-            self.model = AutoModelForSequenceClassification.from_pretrained(
-                checkpoint_path, num_labels=2
-            )
-            self.model.eval()
-
-            self.trainer = Trainer(
-                model=self.model,
-                tokenizer=self.tokenizer,
-                data_collator=self.data_collator,
-            )
-
-            # Make predictions
-            predictions = self.trainer.predict(self.encoded_dataset["test"])
-            preds = np.argmax(predictions.predictions, axis=1)
-            all_predictions.append(preds)
-
-        # Save predictions from each checkpoint
-        for i, preds in enumerate(all_predictions):
-            checkpoint_name = checkpoint_dirs[i] if checkpoint_dirs else "final_model"
-            output_file = f"predictions_{checkpoint_name}.txt"
-            with open(output_file, "w") as f:
-                for pred in preds:
-                    f.write(f"{pred}\n")
-            print(f"Saved predictions to {output_file}")
+        # Save predictions to file
+        with open("predictions.txt", "w") as f:
+            for i, (pred, example) in enumerate(
+                zip(preds, self.encoded_dataset["test"])
+            ):
+                f.write(f"{example['sentence1']}###{example['sentence2']}###{pred}\n")
 
     def run(self):
         """Main execution flow"""
@@ -260,10 +243,8 @@ class MRPCTrainer:
             self.setup_trainer()
             self.train()
 
-        # if self.args.do_predict:
-        # // TODO load model from path
-        #     self.predict() // TODO check predoctop, prediction length
-        # TODO Check all flags
+        if self.args.do_predict and self.args.model_path:
+            self.predict()
 
 
 def main():
