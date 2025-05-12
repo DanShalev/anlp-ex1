@@ -12,7 +12,6 @@ from transformers import (
     DataCollatorWithPadding,
     Trainer,
     TrainingArguments,
-    no_grad,
 )
 
 ALL_SAMPLES = -1
@@ -150,9 +149,14 @@ class MRPCTrainer:
 
     def setup_model(self):
         """Initialize the BERT model"""
-        self.model = AutoModelForSequenceClassification.from_pretrained(
-            self.args.model_path, num_labels=2
-        )
+        if self.args.model_path:
+            self.model = AutoModelForSequenceClassification.from_pretrained(
+                self.args.model_path
+            )
+        else:
+            self.model = AutoModelForSequenceClassification.from_pretrained(
+                "bert-base-uncased", num_labels=2
+            )
 
     def setup_trainer(self):
         """Configure and initialize the HuggingFace Trainer"""
@@ -207,24 +211,13 @@ class MRPCTrainer:
 
     def predict(self):
         """Make predictions on the test set and save results"""
-        # Load model from checkpoint
-        self.model = AutoModelForSequenceClassification.from_pretrained(
-            self.args.model_path
-        )
-
-        # Prepare test data
-        test_data = self.data_collator(self.encoded_dataset["test"])
-
         # Make predictions
-        with no_grad():
-            outputs = self.model(**test_data)
-            preds = np.argmax(outputs.logits.cpu().numpy(), axis=1)
+        predictions = self.trainer.predict(self.encoded_dataset["test"])
+        preds = np.argmax(predictions.predictions, axis=1)
 
-        # Calculate accuracy if labels are available
-        if "label" in self.encoded_dataset["test"].features:
-            labels = self.encoded_dataset["test"]["label"]
-            accuracy = accuracy_score(labels, preds)
-            print(f"Test set accuracy: {accuracy:.4f}")
+        # Print validation accuracy
+        metrics = predictions.metrics
+        print(f"Test set accuracy: {metrics['test_accuracy']:.4f}")
 
         # Save predictions to file
         with open("predictions.txt", "w") as f:
@@ -238,12 +231,12 @@ class MRPCTrainer:
         self.setup_wandb()
         self.load_and_preprocess_data()
         self.setup_model()
+        self.setup_trainer()
 
         if self.args.do_train:
-            self.setup_trainer()
             self.train()
 
-        if self.args.do_predict and self.args.model_path:
+        if self.args.do_predict:
             self.predict()
 
 
