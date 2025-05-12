@@ -128,14 +128,23 @@ class MRPCTrainer:
             )
 
     def compute_metrics(self, pred):
-        """Compute evaluation metrics"""
-        # TODO we need to implement blue metrics
+        """Compute evaluation metrics for MRPC (binary classification)"""
+        preds = (
+            pred.predictions[0]
+            if isinstance(pred.predictions, tuple)
+            else pred.predictions
+        )
         labels = pred.label_ids
-        preds = np.argmax(pred.predictions, axis=1)
+
+        # Convert predictions to binary labels
+        preds = np.argmax(preds, axis=1)
+
+        # Calculate metrics
         acc = accuracy_score(labels, preds)
         precision, recall, f1, _ = precision_recall_fscore_support(
             labels, preds, average="binary"
         )
+
         return {"accuracy": acc, "f1": f1, "precision": precision, "recall": recall}
 
     def setup_model(self):
