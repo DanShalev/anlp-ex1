@@ -212,6 +212,8 @@ class MRPCTrainer:
     def predict(self):
         """Make predictions on the test set and save results"""
         # Make predictions
+        self.trainer.eval()
+        
         predictions = self.trainer.predict(self.encoded_dataset["test"])
         preds = np.argmax(predictions.predictions, axis=1)
 
